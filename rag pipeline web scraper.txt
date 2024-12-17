@@ -1,0 +1,89 @@
+import requests
+from bs4 import BeautifulSoup
+from sentence_transformers import SentenceTransformer
+import faiss
+import numpy as np
+
+# Step 1: Scrape content from the website
+def scrape_website(url):
+    print(f"Scraping content from: {url}")
+    response = requests.get(url)  # Fetch website content
+    if response.status_code != 200:
+        print(f"Failed to retrieve {url}. Status Code: {response.status_code}")
+        return []
+    
+    soup = BeautifulSoup(response.text, "html.parser")  # Parse the HTML
+    content = [p.text.strip() for p in soup.find_all("p") if p.text.strip()]  # Extract paragraphs
+    return content
+
+# Step 2: Break text into smaller chunks
+def chunk_text(text_list, chunk_size=200):
+    chunks = []
+    for text in text_list:
+        for i in range(0, len(text), chunk_size):
+            chunks.append(text[i:i+chunk_size])
+    return chunks
+
+# Step 3: Convert chunks to embeddings using SentenceTransformer
+def get_embeddings(chunks):
+    print("Generating embeddings for content...")
+    model = SentenceTransformer("all-MiniLM-L6-v2")  # Lightweight and fast pre-trained model
+    embeddings = model.encode(chunks, convert_to_tensor=False)
+    return np.array(embeddings).astype('float32')
+
+# Step 4: Store embeddings in FAISS vector database
+def store_in_faiss(embeddings):
+    print("Storing embeddings into FAISS database...")
+    dimension = embeddings.shape[1]  # Embedding size
+    index = faiss.IndexFlatL2(dimension)  # Create FAISS index
+    index.add(embeddings)  # Add embeddings to index
+    return index
+
+# Query the FAISS index and get the most relevant results
+def query_pipeline(query, vector_index, all_chunks):
+    print("Processing the user query...")
+    model = SentenceTransformer("all-MiniLM-L6-v2")
+    query_embedding = model.encode([query], convert_to_tensor=False).astype('float32')
+    
+    # Search the index for the closest chunks
+    distance, idx = vector_index.search(query_embedding, k=3)  # Retrieve top-3 similar chunks
+    print("\nTop 3 Retrieved Chunks:")
+    for i, index in enumerate(idx[0]):
+        print(f"Chunk {i+1}: {all_chunks[index]}")
+    print("\nQuery completed successfully!")
+
+# Full process: Scraping, Chunking, Embedding, and Query Handling
+def data_ingestion_pipeline(urls):
+    all_chunks = []
+    for url in urls:
+        text_content = scrape_website(url)  # Step 1: Scrape content
+        print(f"Extracted {len(text_content)} paragraphs.\n")
+        
+        chunks = chunk_text(text_content, chunk_size=200)  # Step 2: Break into chunks
+        print(f"Split into {len(chunks)} chunks.\n")
+        
+        all_chunks.extend(chunks)  # Append to all chunks
+
+    # Step 3: Generate embeddings for all chunks
+    embeddings = get_embeddings(all_chunks)
+    
+    # Step 4: Store embeddings in FAISS vector index
+    index = store_in_faiss(embeddings)
+    return index, all_chunks
+
+# Entry point: URLs and main logic
+if __name__ == "__main__":
+    # Websites to process
+    urls = [
+        "https://www.stanford.edu/",
+        "https://www.uchicago.edu/"
+    ]
+    
+    # Ingest data and build FAISS index
+    print("Starting Data Ingestion Pipeline...\n")
+    vector_index, all_chunks = data_ingestion_pipeline(urls)
+    print("Pipeline Execution Complete!\n")
+
+    # Query the pipeline for information
+    user_query = input("Enter your query: ")
+    query_pipeline(user_query, vector_index, all_chunks)
